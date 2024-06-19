@@ -22,7 +22,7 @@ RUN go install github.com/tj/node-prune@1159d4c \
 FROM alpine:3.19.1 as base
 
 # hadolint ignore=DL3018
-RUN apk add --no-cache bash nodejs python3 \
+RUN apk add --no-cache bash nodejs python3 ffmpeg lame \
   && find /usr/lib/python3* \
   \( -type d -name __pycache__ -o -type f -name '*.whl' \) \
   -exec rm -r {} \+

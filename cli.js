@@ -26,7 +26,7 @@ import {isBinaryFile} from 'isbinaryfile';
 import {fileTypeFromFile} from 'file-type';
 import {program as commander} from 'commander';
 import {decode as entityDecode} from 'html-entities';
-import {createFFmpeg, fetchFile} from '@ffmpeg/ffmpeg';
+import ffmpeg from 'fluent-ffmpeg';
 import ProgressBar, {getPersistentStdout} from 'xprogress';
 
 import _merge from 'lodash.merge';
@@ -1163,42 +1163,29 @@ async function init(packageJson, queries, options) {
   const encodeQueue = new AsyncQueue(
     'cli:postprocessor:encodeQueue',
     Config.concurrency.encoder,
-    AsyncQueue.provision(
-      async (cleanup, resource) => {
-        if (cleanup) return resource.exit();
-        let ffmpeg = createFFmpeg({log: false});
-        await ffmpeg.load();
-        return ffmpeg;
-      },
-      async (ffmpeg, {track, meta, files}) => {
-        let infile = xpath.basename(files.audio.file.path);
-        let outfile = xpath.basename(files.audio.file.path.replace(/\.x4a$/, '.m4a'));
-        try {
-          ffmpeg.FS('writeFile', infile, await fetchFile(files.audio.file.path));
-          await ffmpeg.run(
-            '-i',
-            infile,
-            '-acodec',
-            'aac',
-            '-b:a',
-            options.bitrate,
-            '-ar',
-            '44100',
-            '-vn',
-            '-t',
-            TimeFormat.fromMs(track.duration, 'hh:mm:ss.sss'),
-            '-f',
-            'ipod',
-            '-aac_pns',
-            '0',
-            outfile,
-          );
-          await fs.writeFile(meta.outFile.handle, ffmpeg.FS('readFile', outfile));
-        } catch (err) {
-          throw {err, [symbols.errorCode]: 7};
-        }
-      },
-    ),
+    async ({track, meta, files}) => {
+      try {
+        const outfile = files.audio.file.path.replace(/\.x4a$/, '.mp3');
+        await new Promise((resolve, reject) => {
+          ffmpeg(files.audio.file.path)
+            .audioBitrate(options.bitrate)
+            .audioCodec('libmp3lame')
+            .audioChannels(2)
+            // setup event handlers
+            .on('end', ()=> {
+              resolve();
+            })
+            .on('error', (err) => {
+              reject(err);
+            })
+            .save(outfile);
+        }).then(async () => {
+          await fs.copyFile(outfile, meta.outFile.path);
+        });
+      } catch (err) {
+        throw {err, [symbols.errorCode]: 7};
+      }
+    },
   );
 
   const postProcessor = new AsyncQueue(
@@ -1219,7 +1206,7 @@ async function init(packageJson, queries, options) {
         meta.outFile = audioFile;
         try {
           await encodeQueue.push({track, meta, files});
-          await embedQueue.push({track, meta, files, audioSource});
+          // await embedQueue.push({track, meta, files, audioSource});
         } catch (err) {
           await audioFile.remove();
           throw err;
@@ -1385,7 +1372,7 @@ async function init(packageJson, queries, options) {
       );
       const outFileName = `${filenamify(trackBaseName, {
         replacement: '_',
-      })}.m4a`;
+      })}.mp3`;
       const trackPath = xpath.join(
         ...(options.tree ? [track.album_artist, track.album].map(name => filenamify(name, {replacement: '_'})) : []),
       );
